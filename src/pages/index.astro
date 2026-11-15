@@ -32,7 +32,7 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
             <span>Check my site</span>
             <svg aria-hidden="true" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12 12 2M5 2h7v7"></path></svg>
           </button>
-          <p class="note">Up to 150 pages are checked. It takes about a minute. Your report opens here as a PDF.</p>
+          <p class="note">Up to 1,000 pages are checked. It can take a few minutes. Your report opens here as a PDF.</p>
         </form>
       </section>
 
@@ -74,7 +74,7 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
       import { makePdf } from "../lib/pdf";
       import type { PageRec, Report, StartResponse } from "../lib/types";
 
-      const CAP = 150, BATCH = 25;
+      const CAP = 1000, BATCH = 50, PARALLEL = 2;
       const root = document.getElementById("qds-audit")!;
       const base = root.dataset.base ?? "";
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -107,23 +107,38 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
         li.querySelector(".s")!.textContent = sub;
       }
 
-      const LV = { risk: "At risk", review: "Review", good: "Good" } as const;
+      const LV = { risk: "Needs work", review: "Could improve", almost: "Almost perfect", good: "All good" } as const;
       let pdfUrl: string | null = null;
 
       function renderFound(r: Report) {
         const ul = $("qa-found");
         ul.replaceChildren();
-        const bad = r.areas.filter((a) => a.level !== "good").sort((a, b) => (a.level === b.level ? 0 : a.level === "risk" ? -1 : 1));
-        for (const a of bad.slice(0, 3)) {
+        const rows = r.areas.flatMap((a) => a.checks.map((c) => ({ c, q: a.question }))).sort((x, y) => (x.c.level === y.c.level ? y.c.share - x.c.share : x.c.level === "risk" ? -1 : 1));
+        for (const { c } of rows.slice(0, 3)) {
           const li = document.createElement("li");
-          li.dataset.level = a.level;
+          li.dataset.level = c.level;
           const dot = document.createElement("span");
           dot.className = "dot";
           dot.setAttribute("aria-hidden", "true");
-          li.append(dot, a.items[0] ?? `${a.stat} ${a.caption}`);
+          li.append(dot, c.pct === "Site-wide" ? c.name : `${c.name}: ${c.pct}`);
           ul.append(li);
         }
       }
+
+      function linkCheck(done: PageRec[]) {
+        const bad = new Set(done.filter((p) => p.status >= 400).flatMap((p) => [p.url, p.final]));
+        const pages = new Set<string>();
+        const examples: [string, string][] = [];
+        let links = 0;
+        for (const p of done) for (const l of p.links) {
+          if (!bad.has(l)) continue;
+          links++;
+          pages.add(p.url);
+          if (examples.length < 3 && !examples.some((e) => e[1] === l)) examples.push([p.url, l]);
+        }
+        return { links, pages: pages.size, examples };
+      }
+      const slim = (ps: PageRec[]) => ps.map((p) => ({ ...p, links: [] as string[] }));
 
       function renderDone(r: Report) {
         $("qa-done-label").textContent = `First report · ${r.host} · ${r.date}`;
@@ -138,11 +153,11 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
           bar.className = "tick";
           bar.setAttribute("aria-hidden", "true");
           const n = document.createElement("span");
-          n.className = "label";
-          n.textContent = `${a.n} · ${a.name}`;
+          n.className = "q";
+          n.textContent = a.question;
           const l = document.createElement("span");
           l.className = "lv";
-          l.textContent = LV[a.level];
+          l.textContent = `${a.score}% · ${LV[a.level]}`;
           li.append(bar, n, l);
           strip.append(li);
         }
@@ -179,33 +194,39 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
         step("read", "run", "Starting");
         paint();
 
-        while (queue.length && done.length < CAP) {
-          const batch = queue.splice(0, Math.min(BATCH, CAP - done.length));
-          let pages: PageRec[];
-          try {
-            pages = (await api<{ pages: PageRec[] }>("pages", { origin: start.site.origin, urls: batch })).pages;
-          } catch {
-            try { pages = (await api<{ pages: PageRec[] }>("pages", { origin: start.site.origin, urls: batch })).pages; }
-            catch { pages = []; }
+        const fetchBatch = async (batch: string[]): Promise<PageRec[]> => {
+          for (let i = 0; i < 2; i++) {
+            try { return (await api<{ pages: PageRec[] }>("pages", { origin: start.site.origin, urls: batch })).pages; } catch { /* retry once */ }
           }
-          for (const p of pages) {
-            p.inSitemap = sitemapSet.has(p.url);
-            done.push(p);
-            for (const l of p.links) {
-              known.add(l);
-              if (!queued.has(l) && done.length + queue.length < CAP) { queue.push(l); queued.add(l); }
+          return [];
+        };
+        while (queue.length && done.length < CAP) {
+          const room = CAP - done.length;
+          const batches: string[][] = [];
+          for (let i = 0; i < PARALLEL && queue.length && batches.reduce((n, b) => n + b.length, 0) < room; i++) {
+            batches.push(queue.splice(0, Math.min(BATCH, room - batches.reduce((n, b) => n + b.length, 0))));
+          }
+          const results = await Promise.all(batches.map(fetchBatch));
+          for (const pages of results) {
+            for (const p of pages) {
+              p.inSitemap = sitemapSet.has(p.url);
+              done.push(p);
+              for (const l of p.links) {
+                known.add(l);
+                if (!queued.has(l) && done.length + queue.length < CAP) { queue.push(l); queued.add(l); }
+              }
             }
           }
           paint();
           if (done.length && queue.length) {
-            api<Report>("report", { site: start.site, pages: done, known: known.size }).then(renderFound).catch(() => {});
+            api<Report>("report", { site: start.site, pages: slim(done.slice(0, 200)), link: linkCheck(done), known: known.size }).then(renderFound).catch(() => {});
           }
         }
         if (!done.some((p) => p.html && p.status < 400)) throw new Error("We could not read any page on this site. Check the address and try again.");
 
         step("read", "done", `${done.length} pages checked`);
         step("write", "run", "Almost done");
-        const report = await api<Report>("report", { site: start.site, pages: done, known: Math.max(start.known, known.size) });
+        const report = await api<Report>("report", { site: start.site, pages: slim(done), link: linkCheck(done), known: Math.max(start.known, known.size) });
         const bytes = await makePdf(report);
         if (pdfUrl) URL.revokeObjectURL(pdfUrl);
         pdfUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
@@ -281,17 +302,19 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
       [data-level="risk"] > .dot { background: #c8352b; }
       .headline { margin: 0; font-size: clamp(2rem, 6vw, 2.8rem); line-height: 1.05; font-weight: 500; letter-spacing: -0.03em; }
       .sub { margin: 0; font-size: 18px; line-height: 1.45; color: #cdd2da; }
-      .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px 16px; }
+      .strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 24px 16px; }
+      .q { font-size: 15px; line-height: 1.3; }
       .strip li { display: flex; flex-direction: column; gap: 8px; }
       .tick { display: block; height: 8px; background: #d98e04; }
       [data-level="risk"] > .tick { background: #c8352b; }
       [data-level="good"] > .tick { background: #7dd98a; }
+      [data-level="almost"] > .tick { background: #b8e07a; }
       .lv { font-size: 15px; font-weight: 500; }
       .again { align-self: flex-start; padding: 0; background: none; border: 0; border-bottom: 1px solid #4a505a; color: #dce2ff; font: inherit; font-size: 15px; cursor: pointer; }
       @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
       @keyframes sweep { 0% { transform: translateX(-120%); } 100% { transform: translateX(420%); } }
       @media (prefers-reduced-motion: reduce) { .sweep, .pulse { animation: none; } .fill { transition: none; } }
-      @media (max-width: 480px) { .panel { padding: 24px; } .strip { grid-template-columns: repeat(2, 1fr); } body { padding: 0; } }
+      @media (max-width: 480px) { .panel { padding: 24px; } body { padding: 0; } }
     </style>
   </body>
 </html>

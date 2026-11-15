@@ -1,6 +1,6 @@
 // Shapes shared by the API routes and the browser script.
 
-export type Level = "good" | "review" | "risk";
+export type Level = "good" | "almost" | "review" | "risk";
 
 export interface SiteInfo {
   host: string;
@@ -31,10 +31,11 @@ export interface PageRec {
   status: number; // 0 = could not load
   html: boolean;
   redirected: boolean;
+  hops: number;
   section: string;
   inSitemap: boolean;
   title: string;
-  desc: string;
+  descLen: number;
   h1: number;
   skips: number;
   noindex: boolean;
@@ -62,16 +63,39 @@ export interface PageRec {
   links: string[]; // internal pages this page links to
 }
 
+export interface CheckRow {
+  name: string; // plain-language title
+  why: string; // plain-language consequence
+  tech: string; // one technical line
+  pct: string; // "41%", "<1%" or "Site-wide"
+  share: number; // 0 to 1, for the bar
+  of: string; // "46 of 112 pages", empty for site-wide checks
+  level: "risk" | "review";
+  examples: string[];
+}
+
 export interface AreaResult {
   id: string;
   n: string;
-  name: string;
-  question: string;
+  question: string; // what a visitor would ask
+  short: string;
   level: Level;
-  stat: string;
-  caption: string;
-  line: string;
-  items: string[];
+  score: number; // percent, from every check of the area
+  summary: string;
+  checks: CheckRow[];
+  oks: string[];
+}
+
+export interface Contact {
+  bookUrl: string;
+  quoteUrl: string;
+  email: string;
+}
+
+export interface LinkCheck {
+  links: number; // broken internal links
+  pages: number; // pages that hold at least one
+  examples: [string, string][]; // [from, to]
 }
 
 export interface Report {
@@ -82,5 +106,7 @@ export interface Report {
   capped: boolean;
   headline: string;
   sub: string;
-  areas: AreaResult[]; // in the fixed order 01 to 06
+  areas: AreaResult[]; // fixed order 01 to 05
+  notes: string[];
+  contact: Contact;
 }

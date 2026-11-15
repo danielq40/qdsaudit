@@ -4,7 +4,8 @@ import {
 } from "./audit";
 import type { PageRec, SiteInfo, StartResponse } from "./types";
 
-export const CAP = 150;
+export const CAP = 1000;
+export const BATCH = 50;
 const SITEMAP_LIMIT = 2000;
 const SKIP_EXT = /\.(pdf|jpe?g|png|gif|svg|webp|avif|ico|zip|mp[34]|mov|webm|css|js|json|xml|txt|docx?|xlsx?|pptx?|woff2?|ttf|rss|atom)$/i;
 const looksHtml = (s: string) => s.trimStart().startsWith("<");
@@ -160,7 +161,7 @@ export const isPlaceholderTitle = (t: string) => PLACEHOLDER.test(t) || /lorem i
 
 function failedPage(url: string): PageRec {
   return {
-    url, final: url, status: 0, html: false, redirected: false, section: "Main pages", inSitemap: false, title: "", desc: "", h1: 0, skips: 0,
+    url, final: url, status: 0, html: false, redirected: false, hops: 0, section: "Main pages", inSitemap: false, title: "", descLen: 0, h1: 0, skips: 0,
     noindex: false, canonicalOther: false, ogImage: false, imgs: 0, noAlt: 0, noDims: 0, heavy: [], ld: 0, ldBad: 0, ldThin: false,
     article: false, author: false, date: false, words: 0, viewport: false, lang: false, blocking: 0, bytes: 0, ttfb: 0,
     navBad: false, staging: false, lorem: false, links: [],
@@ -172,6 +173,7 @@ function analyze(url: string, r: Resp, host: string): { rec: PageRec; pg: Return
   rec.status = r.status;
   rec.final = r.finalUrl;
   rec.redirected = r.redirects > 0;
+  rec.hops = r.redirects;
   rec.ttfb = r.ttfb;
   rec.bytes = r.size;
   const ctype = (r.headers.get("content-type") ?? "").toLowerCase();
@@ -181,8 +183,9 @@ function analyze(url: string, r: Resp, host: string): { rec: PageRec; pg: Return
 
   const pg = parseHtml(r.text);
   const fu = new URL(r.finalUrl);
-  rec.title = pg.title ?? "";
-  rec.desc = metaValue(pg, "description") ?? "";
+  rec.title = (pg.title ?? "").slice(0, 120);
+  const desc = metaValue(pg, "description") ?? "";
+  rec.descLen = desc.length;
   rec.h1 = pg.headings.filter(([l]) => l === 1).length;
   const lv = pg.headings.map(([l]) => l);
   rec.skips = lv.filter((l, i) => i < lv.length - 1 && lv[i + 1] > l + 1).length;
@@ -212,7 +215,7 @@ function analyze(url: string, r: Resp, host: string): { rec: PageRec; pg: Return
   rec.viewport = !!metaValue(pg, "viewport");
   rec.lang = !!pg.lang;
   rec.blocking = pg.scripts.filter(({ attrs: s, inHead }) => inHead && !("async" in s) && !("defer" in s) && (s.type ?? "").toLowerCase() !== "module").length;
-  rec.lorem = pg.lorem || /lorem ipsum/i.test(rec.title + " " + rec.desc);
+  rec.lorem = pg.lorem || /lorem ipsum/i.test(rec.title + " " + desc);
   rec.navBad = pg.links.some((l) => l.nav && (!l.href || l.href === "#" || /^javascript:/i.test(l.href)));
 
   const onStaging = !fu.hostname.endsWith(".webflow.io");
@@ -242,7 +245,7 @@ export async function checkPages(origin: string, urls: string[], allowPrivate: b
     }
     return sizes.get(abs)!;
   };
-  const list = urls.filter((u) => pageKey(u, origin, host)).slice(0, 25);
+  const list = urls.filter((u) => pageKey(u, origin, host)).slice(0, BATCH);
   return pool(list, 6, async (u) => {
     let r: Resp | null = null;
     for (let attempt = 0; attempt < 2 && !r; attempt++) {
