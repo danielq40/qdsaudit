@@ -9,7 +9,7 @@ const C = {
   white: hex("#FFFFFF"), blue: hex("#3D5AFE"), panel: hex("#F4F5F8"),
 };
 const LEVEL: Record<Level, { label: string; bar: ReturnType<typeof hex>; text: ReturnType<typeof hex> }> = {
-  risk: { label: "NEEDS WORK", bar: hex("#C8352B"), text: hex("#B02A21") },
+  risk: { label: "NEEDS FIXING", bar: hex("#C8352B"), text: hex("#B02A21") },
   review: { label: "COULD IMPROVE", bar: hex("#D98E04"), text: hex("#8A5A00") },
   almost: { label: "ALMOST PERFECT", bar: hex("#B8E07A"), text: hex("#4C7A12") },
   good: { label: "ALL GOOD", bar: hex("#7DD98A"), text: hex("#1F7A3A") },

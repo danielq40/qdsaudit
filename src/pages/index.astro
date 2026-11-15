@@ -107,7 +107,7 @@ const base = Astro.url.pathname.replace(/\/+$/, "");
         li.querySelector(".s")!.textContent = sub;
       }
 
-      const LV = { risk: "Needs work", review: "Could improve", almost: "Almost perfect", good: "All good" } as const;
+      const LV = { risk: "Needs fixing", review: "Could improve", almost: "Almost perfect", good: "All good" } as const;
       let pdfUrl: string | null = null;
 
       function renderFound(r: Report) {

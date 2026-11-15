@@ -234,10 +234,12 @@ export function buildReport(site: SiteInfo, all: PageRec[], known: number, date:
     const shown = issues.filter((i) => i.area === a.id && i.level !== "note")
       .sort((x, y) => rank[y.level] - rank[x.level] || y.sev - x.sev || y.share - x.share);
     const t = tally[a.id];
-    const score = t.w ? Math.round((100 * t.h) / t.w) : 100;
     const hasRisk = shown.some((i) => i.level === "risk");
+    // A critical problem (site-wide, or on half the pages or more) caps the score, so the number and the label always agree.
     const blocking = shown.some((i) => i.level === "risk" && (i.pct === "Site-wide" || i.share >= 0.5));
-    const level: Level = !shown.length ? "good" : score < 60 || blocking ? "risk" : score >= 85 && !hasRisk ? "almost" : "review";
+    const base = t.w ? Math.round((100 * t.h) / t.w) : 100;
+    const score = blocking ? Math.min(base, 59) : base;
+    const level: Level = !shown.length ? "good" : score < 60 ? "risk" : score >= 85 && !hasRisk ? "almost" : "review";
     const checks: CheckRow[] = shown.map(({ area: _a, sev: _s, level: lv, ...rest }) => ({ ...rest, level: lv as "risk" | "review" }));
     const summary = level === "good" ? GOOD[a.id] : level === "almost" ? `Nearly there. ${pl(shown.length, "small thing is", "small things are")} left to tidy up.`
       : level === "risk" ? RISK[a.id] : `Mostly in place, with ${pl(shown.length, "thing", "things")} to improve.`;
@@ -259,7 +261,7 @@ export function buildReport(site: SiteInfo, all: PageRec[], known: number, date:
   return {
     host: site.host, date, checked: all.length, total, capped,
     headline: attn ? `${attn} of 5 areas can be improved.` : areas.some((a) => a.level === "almost") ? "Almost perfect." : "All good.",
-    sub: `We checked ${checkedTxt} on ${site.host}. ` + (risk ? `${pl(risk, "area needs", "areas need")} work first.` : attn ? "Nothing is broken, but there is room to improve." : "The basics are in place."),
+    sub: `We checked ${checkedTxt} on ${site.host}. ` + (risk ? `${pl(risk, "area needs", "areas need")} fixing first.` : attn ? "Nothing is broken, but there is room to improve." : "The basics are in place."),
     areas, notes, contact,
   };
 }
