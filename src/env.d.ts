@@ -1,3 +1,4 @@
+/// <reference types="astro/client" />
 /* eslint-disable @typescript-eslint/no-empty-interface */
 type Runtime = import("@astrojs/cloudflare").Runtime<Env>;
 
